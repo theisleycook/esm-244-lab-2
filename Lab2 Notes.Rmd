@@ -1,0 +1,194 @@
+---
+title: "Lab 2"
+author: "Taylor"
+date: "1/17/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+0. Attach packages
+
+```{r load packages}
+library(tidyverse)
+library(janitor)
+library(MASS)
+library(ggrepel)
+library(RColorBrewer)
+library(factoextra)
+library(ggbiplot)
+library(shinythemes)
+
+```
+
+Note: MASS package also has a 'select' function that will mask 'select' in dplyr - we don't want that! There are two things we can do: 
+
+(1) State the package explicitly that the function comes from when using it, e.g. dplyr::select
+
+(2) Generally override that the default select is from MASS as follows: 
+
+    select <- dplyr::select
+    
+```{r, message = FALSE}
+select <- dplyr::select
+```
+
+###1. OLR with political party (Open Science Framework: https://osf.io/8n6s4/)
+
+####a. Get data (pol_party.csv) and do some wrangling
+
+```{r wrangling, message = FALSE}
+
+pol_party <- read_csv('pol_party.csv') %>% 
+  clean_names() # janitor function for snake case
+
+pol_df <- pol_party %>% 
+  select(birth_year, gender, ethnicity, political_party) %>% 
+  filter(birth_year > 1900, political_party != "NA", political_party <= 7) %>% 
+  mutate(age = 2016 - birth_year) # use mutate to calculate value from existing data
+
+# How do these variables influence someone's political affiliation (1-7, 'very liberal'-'very conservative')? 
+# Ordinal logistic regression
+# When doing OLR, we want our dependent vairable to be of class ORDERED FACTOR, so we have to tell R the order
+
+pol_df$political_party <- factor(pol_df$political_party, ordered = TRUE, levels = c('1','2','3','4','5','6','7')) # we assign the order here, even if it's a number
+
+# class(pol_df$political_party)
+  # read out: "ordered" "factor" good job
+
+# Update our categorical predictor variables to factors too:
+
+pol_df$ethnicity <- factor(pol_df$ethnicity)
+pol_df$gender <- factor(pol_df$gender)
+
+# class(pol_df$ethnicity)
+  # read out: "factor" because we didn't give it order
+
+```
+
+Basic data exploration and visualization:
+
+```{r counts and tallies}
+
+# How many counts were there for each?
+
+counts_eth <- pol_df %>% 
+  group_by(ethnicity, political_party) %>% # this is just in Rs brain -- will not LOOK different
+  tally()
+
+counts_eth # gives us counts of ethicity and party
+
+counts_g <- pol_df %>% 
+  group_by(gender, political_party) %>% 
+  tally()
+
+counts_g
+
+## OBSERVATIONS: Make sure you have at LEAST 15 observations for each variable to make this valid. This data can't be fully trusted! Just because we don't get error messages, *doesn't mean* your analysis is valid
+
+
+# LOOK AT UHT
+
+ggplot(pol_df, aes(x = political_party)) +
+  geom_histogram(aes(fill = ethnicity), stat = 'count') + # if you're having hist probs, try count
+  scale_fill_brewer(palette = 'YlGnBu') +
+  facet_wrap(~ethnicity, scales = 'free')
+  
+  
+```
+
+# THESE DATA ARE PRECARIOUS AND N IS TOO SMALL FOR GROUPS!!!!!!
+## Let's see what happens anyway.
+
+```{r more data}
+
+pol_model <- polr(political_party ~ age + gender + ethnicity, data = pol_df) # 'proportional r logistic regression'
+
+summary(pol_model)
+
+# OBSERVATIONS: 
+# Log Odds with respect to factors. So Log Odds coefficient of 0...? No effect. So 'age' is TINY. Slight increase in 'conservatism' by 'age' but not that noticable.
+
+# Gender: reference level is Female. Increase in log odds for male. As you consider M compared to F, they are more likely to rank higher on the scale. MAKES SENSE doods are dicks.
+
+# INTERCEPTS: split points.
+
+# LOG ODDS are hard, conceptually. So exponentiate.
+exp(coef(pol_model))
+
+```
+
+Men are more likely to rank more conservative. Reference value is Asian -- so all of these people are more likely to be conservative. *THIS IS NOT PUBLISHABLE DATA* because it is not robust and... think about the 'goodness' it does for the world.
+
+
+Once we've decided on a model, we can always make predictions using it:
+
+```{r predictions based on outcomes}
+
+predictions <- predict(pol_model, type = 'probs')
+View(predictions)
+
+# easier to look at alongside original data
+
+df <- data.frame(pol_df, predictions)
+
+# can be cool to look at predictions alongside real data to determine model fit
+
+```
+
+### 2. Principal components analysis (PCA)
+
+Using WorldBand environmental indicators
+ **Allison already cleaned up the data, but if you're curious, it's in Read Me.**
+ 
+```{r data wb}
+
+wb_10 <- read_csv('wb_10.csv') %>% 
+  select(-X1) %>% 
+  column_to_rownames('code')
+
+wb_pca <- prcomp(wb_10[3:8], scale = TRUE)
+
+summary(wb_pca)
+
+## PCA only for ???
+
+ggbiplot(wb_pca, groups = wb_10$region) +
+  geom_text_repel(label=rownames(wb_10), size = 2, segment.size = 0.2) +
+  theme_bw()
+
+# OBSERVATIONS:
+# - negative correlation between electricity access & air pollution
+# - postive correlation between CO2, GHG, and methane
+# - COL & VEN very similar
+# - Clusters are similar -- interesting
+# - USA is way the eff out there producing way more emissions than ANYBODY
+
+# Another useful tool: factoextra package (built to help visualize outcomes of ordination methods)
+# screeplot: 
+  fviz_screeplot(wb_pca)
+# see contributions of variables to different components
+  fviz_contrib(wb_pca, choice = 'var', axes = 1, top = 6) 
+    # top = you can limit it to major contributors
+    # axes = which PC level
+  
+# Biplot showing points and vectors:
+  fviz_pca_biplot(wb_pca, 
+                  col.var = 'cos2', # how well represented the variable is represented in the biplot
+                  label = 'var',
+                  repel = TRUE)
+```
+
+
+## Shiny App!!!!
+#### **A matter of precision with brackets and parenthesis**
+
+FIRST -- create new "Shiny App" as single file & copy data into the right folder.
+The file, in this case, is called app.R
+
+```{r}
+
+```
+
